@@ -31,6 +31,7 @@ public:
 	void set_pc(uint64_t pc);
 	void step_over_breakpoint();
 	int wait_for_signal();
+	void check_breakpoint_and_revocer_pc();
 
 private:
 	string m_prog_name;
@@ -60,6 +61,7 @@ void debugger::run() {
 
 	char *line = nullptr;
 	while ((line = linenoise("minidbg> ")) != nullptr) {
+		check_breakpoint_and_revocer_pc();
 		handle_command(line);
 		linenoiseHistoryAdd(line);
 		linenoiseFree(line);
@@ -75,6 +77,9 @@ void debugger::handle_command(const string &line) {
 	} else if (is_prefix(command, "breakpoint")) {
 		string addr(args[1], 2);
 		set_breakpoint_at_address(stol(addr, 0, 16));
+	} else if(is_prefix(command, "delete")) {
+		string addr(args[1], 2);
+		delete_breakpoint_at_address(stol(addr, 0, 16));
 	} else if (is_prefix(command, "quit")) {
 		exit(0);
 	} else if(is_prefix(command, "register")) {
@@ -120,7 +125,15 @@ void debugger::set_breakpoint_at_address(intptr_t addr) {
 }
 
 void debugger::delete_breakpoint_at_address(intptr_t addr) {
-	
+	if (m_breakpoints.count(addr)) {
+		breakpoint &bp = m_breakpoints[addr];
+		bp.disable();
+		m_breakpoints.erase(addr);
+		cout << "Delete breakpoint at address 0x" << hex << addr << endl;
+	} else {
+		cout << "Breakpoint at address 0x" << hex << addr << 
+			" not exists!" << endl;
+	}
 }
 
 void debugger::dump_registers() {
@@ -147,11 +160,10 @@ void debugger::set_pc(uint64_t pc) {
 }
 
 void debugger::step_over_breakpoint() {
-	uint64_t previous_breakpoint_address = get_pc() - 1;
+	uint64_t previous_breakpoint_address = get_pc();
 
 	if (m_breakpoints.count(previous_breakpoint_address)) {
 		breakpoint &bp = m_breakpoints[previous_breakpoint_address];
-		set_pc(previous_breakpoint_address);
 
 		/* 如果运行到这里，前面一个字节一定是断点，如果先被撤销了，就不用恢复了 */
 		if (bp.is_enabled()) {
@@ -160,6 +172,14 @@ void debugger::step_over_breakpoint() {
 			wait_for_signal();
 			bp.enable();
 		}
+	}
+}
+
+void debugger::check_breakpoint_and_revocer_pc() {
+	uint64_t previous_breakpoint_address = get_pc() - 1;
+
+	if (m_breakpoints.count(previous_breakpoint_address)) {
+		set_pc(previous_breakpoint_address);
 	}
 }
 
