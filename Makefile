@@ -1,10 +1,16 @@
 objects = debugger.o breakpoint.o linenoise.o register.o
 CC = g++ -std=c++14
 
-debugger : $(objects)
-	$(CC) -o debugger $(objects)
+export PKG_CONFIG_PATH=./libelfin/elf:./libelfin/dwarf
+CPPFLAGS+=$$(pkg-config --cflags libelf++ libdwarf++)
+# Statically link against our libs to keep the example binaries simple
+# and dependencies correct.
+LIBS=./libelfin/dwarf/libdwarf++.a ./libelfin/elf/libelf++.a
 
-debugger.o : debugger.cpp
+debugger : $(objects) $(LIBS)
+	$(CC) -o $@ $<
+
+debugger.o : debugger.cpp $(LIBS)
 	$(CC) -c -o $@ $<
 
 breakpoint.o : breakpoint.cpp

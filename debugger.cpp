@@ -4,11 +4,18 @@
 #include <unordered_map>
 #include <sstream>
 #include <iomanip>
+#include <fstream>
 
 #include <sys/ptrace.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 #include <unistd.h>
+
+#include "libelfin/elf/elf++.hh"
+#include "libelfin/dwarf/dwarf++.hh"
+
 #include "linenoise.h"
 #include "breakpoint.h"
 #include "register.h"
@@ -17,7 +24,12 @@ using namespace std;
 class debugger {
 public:
 	debugger (string prog_name, pid_t pid)
-		: m_prog_name(move(prog_name)), m_pid(pid) {}
+		: m_prog_name(move(prog_name)), m_pid(pid) {
+			auto fd = open(m_prog_name.c_str(), O_RDONLY);
+
+			m_elf = elf::elf(elf::create_mmap_loader(fd));
+			m_dwarf = dwarf::dwarf(dwarf::elf::create_loader(m_elf));
+		}
 
 	void run();
 	void handle_command(const string &line);
@@ -32,11 +44,21 @@ public:
 	void step_over_breakpoint();
 	int wait_for_signal();
 	void check_breakpoint_and_revocer_pc();
+	siginfo_t get_signal_info();
+	void handle_sigtrap(siginfo_t info);
+
+	dwarf::die get_function_from_pc(uint64_t pc);
+	dwarf::line_table::iterator get_line_entry_from_pc(uint64_t pc);
+	void print_source(const string &file_name, unsigned line, unsigned 
+		n_lines_context);
 
 private:
 	string m_prog_name;
 	pid_t m_pid;
 	unordered_map<intptr_t, breakpoint> m_breakpoints;
+
+	dwarf::dwarf m_dwarf;
+	elf::elf m_elf;
 };
 
 vector<string> split(const string &s, char delimiter) {
@@ -187,7 +209,104 @@ int debugger::wait_for_signal() {
 	int status;
 	int options = 0;
 	waitpid(m_pid, &status, options);
+
+	siginfo_t siginfo = get_signal_info();
+	switch (siginfo.si_signo) {
+		case SIGTRAP:
+			handle_sigtrap(siginfo);
+			break;
+		case SIGSEGV:
+			cout << "Yay, segfault, Reason: " << siginfo.si_code << endl;
+			break;
+		default:
+			cout << "Got signal " << strsignal(siginfo.si_signo) << endl;
+	}
+
 	return status;
+}
+
+siginfo_t debugger::get_signal_info() {
+	siginfo_t info;
+	ptrace(PTRACE_GETSIGINFO, m_pid, nullptr, &info);
+	return info;
+}
+
+void debugger::handle_sigtrap(siginfo_t info) {
+	switch (info.si_code) {
+		
+	}
+}
+
+/**
+ * 从当前rip位置获取在哪个函数内部
+ * （未处理inline函数（函数内部可能还有inline函数））
+ */
+dwarf::die debugger::get_function_from_pc(uint64_t pc) {
+	// 首先遍历每一个编译单元
+	for (const dwarf::compilation_unit &cu : m_dwarf.compilation_units()) {
+		// 每一个编译单元的第一个die说明了该编译单元的一些信息，
+		// 主要使用这个编译单元的地址范围
+		if (dwarf::die_pc_range(cu.root()).contains(pc)) {
+			for (const dwarf::die &die : cu.root()) {
+				if (die.tag == dwarf::DW_TAG::subprogram) {
+					if (dwarf::die_pc_range(die).contains(pc)) {
+						return die;
+					}
+				}
+			}
+		}
+	}
+
+	throw std::out_of_range("Cannot find function");
+}
+
+dwarf::line_table::iterator debugger::get_line_entry_from_pc(uint64_t pc) {
+	for (const dwarf::compilation_unit &cu : m_dwarf.compilation_units()) {
+		if (dwarf::die_pc_range(cu.root()).contains(pc)) {
+			const dwarf::line_table &lt = cu.get_line_table();
+			auto it = lt.find_address(pc);
+			if (it == lt.end()) {
+				throw std::out_of_range("Cannot find line entry");
+			} else {
+				return it;
+			}
+		}
+	}
+
+	throw std::out_of_range("Cannot find line entry");
+}
+
+/**
+ * n_lines_context: 显示line行前面与后面各n_lines_context行 
+ */
+void debugger::print_source(const string &file_name, unsigned line,
+	 unsigned n_lines_context) {
+	ifstream file(file_name);
+
+	unsigned start_line = (line <= n_lines_context ? 1 : line - n_lines_context);
+	unsigned end_line = line + n_lines_context + (line < n_lines_context ? 
+		n_lines_context - line : 0) + 1;
+	
+	char c;
+	unsigned current_line = 1u;
+	while (current_line != start_line && file.get(c)) {
+		if (c == '\n') {
+			current_line++;
+		}
+	}
+
+	cout << (current_line == start_line ? "> " : "  ");
+
+	while (current_line <= end_line && file.get(c)) {
+		cout << c;
+		if (c == '\n') {
+			current_line++;
+			cout << (current_line == line ? "> " : "  ");
+		}
+	}
+
+	// Write newline and make sure that the stream is flushed properly
+	cout << endl;
 }
 
 int main(int argc, char *argv[]) {
