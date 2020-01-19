@@ -8,16 +8,17 @@ CPPFLAGS+=$$(pkg-config --cflags libelf++ libdwarf++)
 LIBS=./libelfin/dwarf/libdwarf++.a ./libelfin/elf/libelf++.a
 
 debugger : $(objects) $(LIBS)
-	$(CC) -o $@ $<
+	$(CC) -o $@ $(objects) $(LIBS)
 
-debugger.o : debugger.cpp $(LIBS)
-	$(CC) -c -o $@ $<
+debugger.o : debugger.cpp
+	$(CC) -c -o $@ $< 
 
 breakpoint.o : breakpoint.cpp
 	$(CC) -c -o $@ $<
 
 linenoise.o : linenoise.c
-	$(CC) -c -o $@ $<
+	gcc -c -o $@ $<
 
 register.o : register.cpp
 	$(CC) -c -o $@ $<
+

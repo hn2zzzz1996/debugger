@@ -44,13 +44,14 @@ public:
 	void step_over_breakpoint();
 	int wait_for_signal();
 	void check_breakpoint_and_revocer_pc();
+
 	siginfo_t get_signal_info();
 	void handle_sigtrap(siginfo_t info);
 
 	dwarf::die get_function_from_pc(uint64_t pc);
 	dwarf::line_table::iterator get_line_entry_from_pc(uint64_t pc);
 	void print_source(const string &file_name, unsigned line, unsigned 
-		n_lines_context);
+		n_lines_context = 10);
 
 private:
 	string m_prog_name;
@@ -83,7 +84,7 @@ void debugger::run() {
 
 	char *line = nullptr;
 	while ((line = linenoise("minidbg> ")) != nullptr) {
-		check_breakpoint_and_revocer_pc();
+		// check_breakpoint_and_revocer_pc();
 		handle_command(line);
 		linenoiseHistoryAdd(line);
 		linenoiseFree(line);
@@ -218,7 +219,11 @@ int debugger::wait_for_signal() {
 		case SIGSEGV:
 			cout << "Yay, segfault, Reason: " << siginfo.si_code << endl;
 			break;
+		case SIGQUIT:
+			cout << "Debugged programm exited!" << endl;
+			break;
 		default:
+			cout << "Unknown signal number: " << siginfo.si_signo << endl;
 			cout << "Got signal " << strsignal(siginfo.si_signo) << endl;
 	}
 
@@ -233,7 +238,22 @@ siginfo_t debugger::get_signal_info() {
 
 void debugger::handle_sigtrap(siginfo_t info) {
 	switch (info.si_code) {
-		
+		// one of these will be set if a breakpoint was hit
+		case SI_KERNEL:
+		case TRAP_BRKPT:
+		{
+			set_pc(get_pc() - 1);
+			cout << "Hit breakpoint at address 0x" << hex << get_pc() << endl;
+			auto line_entry = get_line_entry_from_pc(get_pc());
+			print_source(line_entry->file->path, line_entry->line);
+			return;
+		}
+		// this will be set if the signal was sent by single stepping
+		case TRAP_TRACE:
+			return;
+		default:
+			cout << "Unknown SIGTRAP code " << info.si_code << endl;
+			return;
 	}
 }
 
