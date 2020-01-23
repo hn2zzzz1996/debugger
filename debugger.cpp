@@ -211,6 +211,10 @@ int debugger::wait_for_signal() {
 	int options = 0;
 	waitpid(m_pid, &status, options);
 
+	if (WIFEXITED(status)) {
+		return status;
+	}
+
 	siginfo_t siginfo = get_signal_info();
 	switch (siginfo.si_signo) {
 		case SIGTRAP:
@@ -252,6 +256,7 @@ void debugger::handle_sigtrap(siginfo_t info) {
 		case TRAP_TRACE:
 			return;
 		default:
+		// when the tracee first run, it will send a SIGTRAP signal with si_code=0
 			cout << "Unknown SIGTRAP code " << info.si_code << endl;
 			return;
 	}
